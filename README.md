@@ -39,6 +39,8 @@ Aplicación web para el control financiero diario de conductores de Uber/Lyft. P
 
 - Python 3.7 o superior
 - pip (gestor de paquetes de Python)
+- Cuenta de Google Cloud con Service Account configurada
+- Google Sheet "App_Uber_2025" creado y compartido con la cuenta de servicio
 
 ### Pasos de Instalación
 
@@ -53,12 +55,28 @@ Aplicación web para el control financiero diario de conductores de Uber/Lyft. P
    pip install -r requirements.txt
    ```
 
-3. **Ejecutar la aplicación**
+3. **Configurar credenciales de Google Sheets**
+   
+   **IMPORTANTE:** Las credenciales se configuran a través de **Streamlit Secrets** y **NO deben subirse a GitHub**.
+   
+   - Si usas **Streamlit Cloud**: Configura los secrets en Settings → Secrets
+   - Si ejecutas **localmente**: Crea `.streamlit/secrets.toml` (ver `STREAMLIT_SECRETS.md`)
+   
+   ⚠️ **NUNCA** hagas commit de archivos con credenciales. El `.gitignore` ya protege estos archivos.
+
+4. **Configurar Google Sheets**
+   
+   - Crea un Google Sheet llamado "App_Uber_2025"
+   - Crea las hojas "Config" y "Driver_Finances_DB"
+   - Comparte el Sheet con el email de la cuenta de servicio (con permisos de Editor)
+   - Ver detalles en `GOOGLE_SHEETS_SETUP.md`
+
+5. **Ejecutar la aplicación**
    ```bash
    streamlit run driver_profit_app.py
    ```
 
-4. **Abrir en el navegador**
+6. **Abrir en el navegador**
    - La aplicación se abrirá automáticamente en `http://localhost:8501`
    - Si no se abre automáticamente, accede manualmente a esa dirección
 
@@ -67,23 +85,25 @@ Aplicación web para el control financiero diario de conductores de Uber/Lyft. P
 ```
 control_financiero/
 ├── driver_profit_app.py    # Aplicación principal Streamlit
-├── database.py              # Módulo de base de datos SQLite
+├── database.py              # Módulo de conexión con Google Sheets
 ├── index.html              # Versión web estática (HTML/CSS/JS)
 ├── styles.css              # Estilos CSS para versión web
 ├── script.js               # JavaScript para versión web
 ├── requirements.txt        # Dependencias de Python
 ├── README.md              # Este archivo
-└── .gitignore             # Archivos a ignorar en Git
+├── GOOGLE_SHEETS_SETUP.md  # Guía de configuración de Google Sheets
+├── STREAMLIT_SECRETS.md   # Guía de configuración de credenciales
+└── .gitignore             # Archivos a ignorar en Git (incluye credenciales)
 ```
 
-## 💾 Base de Datos
+## 💾 Almacenamiento de Datos
 
-La aplicación utiliza SQLite para almacenar los registros. La base de datos se crea automáticamente al ejecutar la aplicación por primera vez.
+La aplicación utiliza **Google Sheets** para almacenar los registros. Los datos se guardan en un archivo de Google Sheets llamado "App_Uber_2025".
 
-### Estructura de la Base de Datos
+### Estructura de Google Sheets
 
-- **daily_records**: Almacena todos los registros diarios
-- **vehicle_config**: Almacena la configuración del vehículo (MPG, precio gasolina, meta diaria)
+- **Hoja "Config"**: Almacena la configuración del vehículo (MPG, precio gasolina, meta diaria)
+- **Hoja "Driver_Finances_DB"**: Almacena todos los registros diarios
 
 ### Datos Almacenados
 
@@ -93,6 +113,10 @@ La aplicación utiliza SQLite para almacenar los registros. La base de datos se 
 - Millas recorridas y galones usados
 - Ganancia neta y ratio de gastos
 - Fecha del registro
+
+**Nota:** Los ingresos y gastos adicionales se almacenan como JSON en las celdas correspondientes.
+
+Ver `GOOGLE_SHEETS_SETUP.md` para más detalles sobre la estructura de las hojas.
 
 ## 🎯 Uso
 
