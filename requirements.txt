@@ -1,4 +1,5 @@
 streamlit>=1.30.0
 google-generativeai
 gspread
-google-auth
+oauth2client
+pandas
