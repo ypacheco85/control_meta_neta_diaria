@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import json
+from calendar import monthrange
 
 # Nombre de la hoja de cálculo y pestañas
 SHEET_NAME = "App_Uber_2025"
@@ -462,13 +463,32 @@ def get_statistics() -> Dict:
             'total_fuel_cost': 0.0
         }
 
-def get_weekly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen semanal (últimos 7 días) - usa datos cacheados"""
+def get_week_start_end(date: datetime.date) -> tuple:
+    """Obtiene el lunes y domingo de la semana que contiene la fecha dada"""
+    # weekday() devuelve 0=lunes, 6=domingo
+    days_since_monday = date.weekday()
+    week_start = date - timedelta(days=days_since_monday)  # Lunes
+    week_end = week_start + timedelta(days=6)  # Domingo
+    return week_start, week_end
+
+def get_weekly_summary(meta_diaria: float, week_start_date: Optional[datetime.date] = None) -> Dict:
+    """Obtiene el resumen semanal (lunes a domingo) - usa datos cacheados
+    
+    Args:
+        meta_diaria: Meta diaria de ganancia neta
+        week_start_date: Fecha del lunes de la semana (si None, usa la semana actual)
+    """
     try:
         # Usar get_all_records que ya tiene caché
         records = get_all_records(limit=100)
-        today = datetime.now().date()
-        week_start = today - timedelta(days=6)
+        
+        # Calcular semana actual si no se especifica
+        if week_start_date is None:
+            today = datetime.now().date()
+            week_start, week_end = get_week_start_end(today)
+        else:
+            week_start = week_start_date
+            week_end = week_start + timedelta(days=6)
         
         total_income = 0.0
         total_expenses = 0.0
@@ -479,7 +499,7 @@ def get_weekly_summary(meta_diaria: float) -> Dict:
         for r in records:
             try:
                 r_date = datetime.strptime(r.get('date', ''), '%Y-%m-%d').date()
-                if week_start <= r_date <= today:
+                if week_start <= r_date <= week_end:
                     total_income += float(r.get('total_gross', 0))
                     total_expenses += float(r.get('total_expenses', 0))
                     total_profit += float(r.get('net_profit', 0))
@@ -498,10 +518,14 @@ def get_weekly_summary(meta_diaria: float) -> Dict:
             'total_miles': total_miles,
             'meta_semanal': meta_semanal,
             'diferencia_meta': total_profit - meta_semanal,
-            'porcentaje_meta': (total_profit / meta_semanal * 100) if meta_semanal > 0 else 0.0
+            'porcentaje_meta': (total_profit / meta_semanal * 100) if meta_semanal > 0 else 0.0,
+            'week_start': week_start,
+            'week_end': week_end
         }
     except Exception as e:
         meta_semanal = meta_diaria * 7
+        today = datetime.now().date()
+        week_start, week_end = get_week_start_end(today)
         return {
             'days': 0,
             'total_income': 0.0,
@@ -510,16 +534,40 @@ def get_weekly_summary(meta_diaria: float) -> Dict:
             'total_miles': 0.0,
             'meta_semanal': meta_semanal,
             'diferencia_meta': -meta_semanal,
-            'porcentaje_meta': 0.0
+            'porcentaje_meta': 0.0,
+            'week_start': week_start,
+            'week_end': week_end
         }
 
-def get_monthly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen mensual (últimos 30 días) - usa datos cacheados"""
+def get_month_start_end(year: int, month: int) -> tuple:
+    """Obtiene el primer y último día del mes"""
+    month_start = datetime(year, month, 1).date()
+    last_day = monthrange(year, month)[1]
+    month_end = datetime(year, month, last_day).date()
+    return month_start, month_end
+
+def get_monthly_summary(meta_diaria: float, year: Optional[int] = None, month: Optional[int] = None) -> Dict:
+    """Obtiene el resumen mensual del mes especificado - usa datos cacheados
+    
+    Args:
+        meta_diaria: Meta diaria de ganancia neta
+        year: Año del mes (si None, usa el año actual)
+        month: Mes (1-12, si None, usa el mes actual)
+    """
     try:
         # Usar get_all_records que ya tiene caché
         records = get_all_records(limit=100)
-        today = datetime.now().date()
-        month_start = today - timedelta(days=29)
+        
+        # Calcular mes actual si no se especifica
+        if year is None or month is None:
+            today = datetime.now().date()
+            year = today.year
+            month = today.month
+        
+        month_start, month_end = get_month_start_end(year, month)
+        
+        # Calcular días del mes para la meta
+        days_in_month = (month_end - month_start).days + 1
         
         total_income = 0.0
         total_expenses = 0.0
@@ -530,7 +578,7 @@ def get_monthly_summary(meta_diaria: float) -> Dict:
         for r in records:
             try:
                 r_date = datetime.strptime(r.get('date', ''), '%Y-%m-%d').date()
-                if month_start <= r_date <= today:
+                if month_start <= r_date <= month_end:
                     total_income += float(r.get('total_gross', 0))
                     total_expenses += float(r.get('total_expenses', 0))
                     total_profit += float(r.get('net_profit', 0))
@@ -539,7 +587,7 @@ def get_monthly_summary(meta_diaria: float) -> Dict:
             except:
                 continue
         
-        meta_mensual = meta_diaria * 30
+        meta_mensual = meta_diaria * days_in_month
         
         return {
             'days': days_count,
@@ -549,10 +597,20 @@ def get_monthly_summary(meta_diaria: float) -> Dict:
             'total_miles': total_miles,
             'meta_mensual': meta_mensual,
             'diferencia_meta': total_profit - meta_mensual,
-            'porcentaje_meta': (total_profit / meta_mensual * 100) if meta_mensual > 0 else 0.0
+            'porcentaje_meta': (total_profit / meta_mensual * 100) if meta_mensual > 0 else 0.0,
+            'month_start': month_start,
+            'month_end': month_end,
+            'year': year,
+            'month': month,
+            'days_in_month': days_in_month
         }
     except Exception as e:
-        meta_mensual = meta_diaria * 30
+        today = datetime.now().date()
+        year = today.year
+        month = today.month
+        month_start, month_end = get_month_start_end(year, month)
+        days_in_month = (month_end - month_start).days + 1
+        meta_mensual = meta_diaria * days_in_month
         return {
             'days': 0,
             'total_income': 0.0,
@@ -561,7 +619,12 @@ def get_monthly_summary(meta_diaria: float) -> Dict:
             'total_miles': 0.0,
             'meta_mensual': meta_mensual,
             'diferencia_meta': -meta_mensual,
-            'porcentaje_meta': 0.0
+            'porcentaje_meta': 0.0,
+            'month_start': month_start,
+            'month_end': month_end,
+            'year': year,
+            'month': month,
+            'days_in_month': days_in_month
         }
 
 def delete_record(date: str) -> bool:

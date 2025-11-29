@@ -94,9 +94,39 @@ st.session_state.view_option = view_option
 
 # Mostrar acumulados según la selección
 if view_option == "📆 Semanal":
+    st.sidebar.markdown("### Seleccionar Semana")
+    
+    # Calcular semanas disponibles (últimas 12 semanas)
+    today = datetime.now().date()
+    current_week_start, _ = db.get_week_start_end(today)
+    
+    # Generar lista de semanas (semana actual y 11 anteriores)
+    weeks_list = []
+    for i in range(12):
+        week_start = current_week_start - timedelta(days=7 * i)
+        week_end = week_start + timedelta(days=6)
+        week_label = f"Semana {week_start.strftime('%d/%m')} - {week_end.strftime('%d/%m/%Y')}"
+        if i == 0:
+            week_label = f"📅 {week_label} (Actual)"
+        weeks_list.append((week_start, week_label))
+    
+    # Selector de semana
+    week_options = [label for _, label in weeks_list]
+    selected_week_idx = st.sidebar.selectbox(
+        "Semana:",
+        range(len(week_options)),
+        format_func=lambda x: week_options[x],
+        key="week_selector"
+    )
+    selected_week_start = weeks_list[selected_week_idx][0]
+    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("### Resumen Semanal")
     try:
-        weekly = db.get_weekly_summary(meta_neta_objetivo)
+        weekly = db.get_weekly_summary(meta_neta_objetivo, selected_week_start)
+        
+        # Mostrar rango de fechas
+        st.sidebar.caption(f"📅 {weekly['week_start'].strftime('%d/%m')} - {weekly['week_end'].strftime('%d/%m/%Y')}")
         
         st.sidebar.metric("Días registrados", f"{weekly['days']}/7")
         st.sidebar.metric("💰 Ingresos Totales", f"${weekly['total_income']:.2f}")
@@ -127,18 +157,47 @@ if view_option == "📆 Semanal":
             st.sidebar.error(f"Error cargando datos semanales: {e}")
 
 elif view_option == "📅 Mensual":
+    st.sidebar.markdown("### Seleccionar Mes")
+    
+    # Calcular mes actual
+    today = datetime.now().date()
+    current_year = today.year
+    current_month = today.month
+    
+    # Selector de año y mes
+    years_list = list(range(current_year - 1, current_year + 1))
+    months_list = [
+        (1, "Enero"), (2, "Febrero"), (3, "Marzo"), (4, "Abril"),
+        (5, "Mayo"), (6, "Junio"), (7, "Julio"), (8, "Agosto"),
+        (9, "Septiembre"), (10, "Octubre"), (11, "Noviembre"), (12, "Diciembre")
+    ]
+    
+    selected_year = st.sidebar.selectbox("Año:", years_list, index=len(years_list)-1, key="year_selector")
+    selected_month = st.sidebar.selectbox(
+        "Mes:",
+        range(1, 13),
+        format_func=lambda x: months_list[x-1][1],
+        index=current_month - 1 if selected_year == current_year else 0,
+        key="month_selector"
+    )
+    
+    st.sidebar.markdown("---")
     st.sidebar.markdown("### Resumen Mensual")
     try:
-        monthly = db.get_monthly_summary(meta_neta_objetivo)
+        monthly = db.get_monthly_summary(meta_neta_objetivo, selected_year, selected_month)
         
-        st.sidebar.metric("Días registrados", f"{monthly['days']}/30")
+        # Mostrar rango de fechas
+        month_name = months_list[selected_month - 1][1]
+        st.sidebar.caption(f"📅 {month_name} {selected_year}")
+        
+        st.sidebar.metric("Días registrados", f"{monthly['days']}/{monthly['days_in_month']}")
         st.sidebar.metric("💰 Ingresos Totales", f"${monthly['total_income']:.2f}")
         st.sidebar.metric("💸 Gastos Totales", f"${monthly['total_expenses']:.2f}")
         st.sidebar.metric("🏆 Ganancia Neta", f"${monthly['total_profit']:.2f}")
         
         st.sidebar.markdown("---")
         st.sidebar.markdown("### Meta Mensual")
-        st.sidebar.metric("Meta (30 días)", f"${monthly['meta_mensual']:.2f}")
+        st.sidebar.metric(f"Meta ({monthly['days_in_month']} días)", f"${monthly['meta_mensual']:.2f}")
         
         diferencia = monthly['diferencia_meta']
         if diferencia >= 0:
@@ -505,9 +564,27 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
     st.header("📈 Historial y Estadísticas")
     
     if view_option == "📆 Semanal":
-        st.subheader("📆 Resumen Semanal (Últimos 7 días)")
+        # Obtener la semana seleccionada del sidebar
+        today = datetime.now().date()
+        current_week_start, _ = db.get_week_start_end(today)
+        
+        # Generar lista de semanas (mismo cálculo que en sidebar)
+        weeks_list = []
+        for i in range(12):
+            week_start = current_week_start - timedelta(days=7 * i)
+            weeks_list.append(week_start)
+        
+        # Obtener índice seleccionado (si existe en session_state, sino usar 0)
+        selected_week_idx = st.session_state.get('week_selector', 0)
+        if selected_week_idx >= len(weeks_list):
+            selected_week_idx = 0
+        selected_week_start = weeks_list[selected_week_idx]
+        
+        st.subheader(f"📆 Resumen Semanal")
+        st.caption(f"Semana del {selected_week_start.strftime('%d/%m/%Y')} al {(selected_week_start + timedelta(days=6)).strftime('%d/%m/%Y')}")
+        
         try:
-            weekly = db.get_weekly_summary(meta_neta_objetivo)
+            weekly = db.get_weekly_summary(meta_neta_objetivo, selected_week_start)
             
             # Métricas principales
             col1, col2, col3, col4 = st.columns(4)
@@ -535,8 +612,6 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             # Registros de la semana
             st.markdown("---")
             st.subheader("📅 Registros de la Semana")
-            today = datetime.now().date()
-            week_start = today - timedelta(days=6)
             
             week_records = []
             try:
@@ -544,7 +619,7 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
                 for record in all_records:
                     try:
                         r_date = datetime.strptime(record.get('date', ''), '%Y-%m-%d').date()
-                        if week_start <= r_date <= today:
+                        if weekly['week_start'] <= r_date <= weekly['week_end']:
                             week_records.append(record)
                     except:
                         continue
@@ -573,13 +648,29 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
                 st.error(f"Error cargando datos semanales: {e}")
     
     elif view_option == "📅 Mensual":
-        st.subheader("📅 Resumen Mensual (Últimos 30 días)")
+        # Obtener el mes seleccionado del sidebar
+        today = datetime.now().date()
+        current_year = today.year
+        current_month = today.month
+        
+        # Obtener valores seleccionados (si existen en session_state, sino usar actuales)
+        selected_year = st.session_state.get('year_selector', current_year)
+        selected_month = st.session_state.get('month_selector', current_month - 1) + 1
+        
+        months_list = [
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        
+        st.subheader(f"📅 Resumen Mensual")
+        st.caption(f"{months_list[selected_month - 1]} {selected_year}")
+        
         try:
-            monthly = db.get_monthly_summary(meta_neta_objetivo)
+            monthly = db.get_monthly_summary(meta_neta_objetivo, selected_year, selected_month)
             
             # Métricas principales
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Días registrados", f"{monthly['days']}/30")
+            col1.metric("Días registrados", f"{monthly['days']}/{monthly['days_in_month']}")
             col2.metric("💰 Ingresos Totales", f"${monthly['total_income']:.2f}")
             col3.metric("💸 Gastos Totales", f"${monthly['total_expenses']:.2f}")
             col4.metric("🏆 Ganancia Neta", f"${monthly['total_profit']:.2f}")
@@ -589,7 +680,7 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             # Meta mensual
             col_meta1, col_meta2 = st.columns(2)
             with col_meta1:
-                st.metric("Meta Mensual (30 días)", f"${monthly['meta_mensual']:.2f}")
+                st.metric(f"Meta Mensual ({monthly['days_in_month']} días)", f"${monthly['meta_mensual']:.2f}")
             with col_meta2:
                 diferencia = monthly['diferencia_meta']
                 if diferencia >= 0:
@@ -603,9 +694,22 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             # Registros del mes
             st.markdown("---")
             st.subheader("📅 Registros del Mes")
-            records = db.get_all_records(limit=30)
-            if records:
-                for record in records:
+            
+            month_records = []
+            try:
+                all_records = db.get_all_records(limit=100)
+                for record in all_records:
+                    try:
+                        r_date = datetime.strptime(record.get('date', ''), '%Y-%m-%d').date()
+                        if monthly['month_start'] <= r_date <= monthly['month_end']:
+                            month_records.append(record)
+                    except:
+                        continue
+            except:
+                pass
+            
+            if month_records:
+                for record in month_records:
                     with st.expander(f"📅 {record.get('date', 'Sin fecha')} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
                         col_h1, col_h2, col_h3 = st.columns(3)
                         col_h1.metric("Ingreso Bruto", f"${float(record.get('total_gross', 0)):.2f}")
