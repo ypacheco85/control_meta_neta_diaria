@@ -224,14 +224,15 @@ def save_daily_record(data: Dict, record_date: Optional[str] = None) -> bool:
         ]
         
         # Buscar si ya existe la fecha (Columna A)
-        try:
-            cell = ws.find(record_date, in_column=1)
+        # find() devuelve None si no encuentra la celda, no lanza excepción
+        cell = ws.find(record_date, in_column=1)
+        if cell is not None:
             # Si existe, actualizamos esa fila
             row_num = cell.row
             # Actualizar toda la fila de una vez (más eficiente)
             range_name = f'A{row_num}:S{row_num}'
             ws.update(range_name, [row_data])
-        except gspread.exceptions.CellNotFound:
+        else:
             # Si no existe, agregamos nueva fila
             ws.append_row(row_data)
         
@@ -264,7 +265,11 @@ def get_record_by_date(date: str) -> Optional[Dict]:
         
         ws = sheet.worksheet(WORKSHEET_DB)
         
+        # find() devuelve None si no encuentra la celda
         cell = ws.find(date, in_column=1)
+        if cell is None:
+            return None
+        
         row_values = ws.row_values(cell.row)
         
         # Mapear la lista de valores a un diccionario
@@ -317,8 +322,6 @@ def get_record_by_date(date: str) -> Optional[Dict]:
             'meta_neta_objetivo': safe_float(row_values[17] if len(row_values) > 17 else 0),
             'expense_ratio': safe_float(row_values[18] if len(row_values) > 18 else 0)
         }
-    except gspread.exceptions.CellNotFound:
-        return None
     except Exception as e:
         return None
 
@@ -660,8 +663,13 @@ def delete_record(date: str) -> bool:
         if sheet is None:
             return False
         ws = sheet.worksheet(WORKSHEET_DB)
+        # find() devuelve None si no encuentra la celda
         cell = ws.find(date, in_column=1)
+        if cell is None:
+            return False
         ws.delete_rows(cell.row)
+        # Limpiar caché después de eliminar
+        st.cache_data.clear()
         return True
     except Exception as e:
         return False
