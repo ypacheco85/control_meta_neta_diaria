@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚗 Control de Meta Neta Diaria - Uber/Lyft</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <h2>⚙️ Configuración del Auto</h2>
+            <p class="sidebar-info">Ajusta esto según tu Toyota Highlander 2025</p>
+            
+            <div class="form-group">
+                <label for="mpg">Consumo Promedio (MPG)</label>
+                <input type="number" id="mpg" value="35.0" step="0.1" min="0">
+                <small>Millas por galón de tu vehículo</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="gas-price">Precio Gasolina ($/galón)</label>
+                <input type="number" id="gas-price" value="3.10" step="0.01" min="0">
+            </div>
+            
+            <div class="form-group">
+                <label for="meta-neta">Meta Neta Diaria ($)</label>
+                <input type="number" id="meta-neta" value="200.0" step="10.0" min="0">
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <h1>🚗 Control de Meta Neta Diaria</h1>
+            <hr>
+
+            <!-- Sección 1: Ingresos -->
+            <section class="section">
+                <h2>1. Ingresos Brutos</h2>
+                <div class="columns">
+                    <div class="column">
+                        <label for="uber-earnings">Ganancia Uber ($)</label>
+                        <input type="number" id="uber-earnings" value="0" step="1.0" min="0">
+                    </div>
+                    <div class="column">
+                        <label for="lyft-earnings">Ganancia Lyft ($)</label>
+                        <input type="number" id="lyft-earnings" value="0" step="1.0" min="0">
+                    </div>
+                    <div class="column">
+                        <label for="cash-tips">Efectivo/Propina ($)</label>
+                        <input type="number" id="cash-tips" value="0" step="1.0" min="0">
+                    </div>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">💰 Ingreso Bruto Total</span>
+                    <span class="metric-value" id="total-gross">$0.00</span>
+                </div>
+            </section>
+
+            <hr>
+
+            <!-- Sección 2: Combustible -->
+            <section class="section">
+                <h2>2. Cálculo de Combustible</h2>
+                <div class="columns">
+                    <div class="column">
+                        <label for="odo-start">Odómetro INICIAL</label>
+                        <input type="number" id="odo-start" value="0" step="1" min="0">
+                    </div>
+                    <div class="column">
+                        <label for="odo-end">Odómetro FINAL (o Actual)</label>
+                        <input type="number" id="odo-end" value="0" step="1" min="0">
+                    </div>
+                </div>
+                <div id="odo-warning" class="warning hidden">⚠️ Ingresa el odómetro inicial para calcular el gasto de gasolina.</div>
+                
+                <div class="metrics-row">
+                    <div class="metric-card">
+                        <div class="metric-label-small">Millas Recorridas</div>
+                        <div class="metric-value-small" id="miles-driven">0.0 mi</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label-small">Galones Estimados</div>
+                        <div class="metric-value-small" id="gallons-used">0.00 gal</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label-small">⛽ Costo Combustible</div>
+                        <div class="metric-value-small" id="fuel-cost">$0.00</div>
+                    </div>
+                </div>
+            </section>
+
+            <hr>
+
+            <!-- Sección 3: Otros Gastos -->
+            <section class="section">
+                <h2>3. Otros Gastos Operativos</h2>
+                <div class="columns">
+                    <div class="column">
+                        <label for="food-cost">Comida / Café ($)</label>
+                        <input type="number" id="food-cost" value="0" step="1.0" min="0">
+                    </div>
+                    <div class="column">
+                        <label for="misc-cost">Peajes / Lavado / Otros ($)</label>
+                        <input type="number" id="misc-cost" value="0" step="1.0" min="0">
+                    </div>
+                </div>
+                
+                <!-- Gastos Adicionales -->
+                <div class="additional-expenses-section">
+                    <h3>➕ Gastos Adicionales</h3>
+                    <p class="caption">Agrega otros gastos operativos del día</p>
+                    
+                    <div id="additional-expenses-list"></div>
+                    
+                    <div class="add-expense-form">
+                        <div class="columns">
+                            <div class="column">
+                                <input type="text" id="new-expense-name" placeholder="Descripción del gasto (Ej: Estacionamiento, Reparación, etc.)">
+                            </div>
+                            <div class="column">
+                                <input type="number" id="new-expense-amount" placeholder="Cantidad ($)" step="1.0" min="0" value="0">
+                            </div>
+                            <div class="column">
+                                <button id="add-expense-btn" class="add-expense-button">➕ Agregar Gasto</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="additional-expenses-total" class="additional-total hidden"></div>
+                </div>
+                
+                <p class="caption" id="wear-tear">Reserva estimada por desgaste ($0.10/milla): $0.00 (No se descuenta del efectivo hoy, pero tenlo en cuenta)</p>
+            </section>
+
+            <hr>
+
+            <!-- Sección 4: Resultado Final -->
+            <section class="section">
+                <h2>📊 Resultado Final</h2>
+                
+                <div id="health-message" class="health-message hidden"></div>
+                
+                <div class="metrics-row">
+                    <div class="metric-card-large">
+                        <div class="metric-label-large">💸 Gastos Totales (Hoy)</div>
+                        <div class="metric-value-large" id="total-expenses">$0.00</div>
+                        <div class="metric-delta" id="expense-delta">-0.0% del ingreso</div>
+                    </div>
+                    <div class="metric-card-large">
+                        <div class="metric-label-large">🏆 GANANCIA NETA (Bolsillo)</div>
+                        <div class="metric-value-large" id="net-profit">$0.00</div>
+                        <div class="metric-delta" id="profit-delta">$0.00 vs Meta</div>
+                    </div>
+                </div>
+
+                <div id="progress-section" class="progress-section hidden">
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progress-bar"></div>
+                    </div>
+                    <p class="caption" id="progress-text">Progreso hacia la meta: 0%</p>
+                </div>
+
+                <div id="success-message" class="success-message hidden">
+                    🎉 ¡FELICIDADES! HAS LOGRADO TU META NETA DE HOY.
+                </div>
+
+                <!-- Botón Guardar -->
+                <div style="text-align: center; margin-top: 20px;">
+                    <button id="save-button" class="save-button">💾 Guardar Registro de Hoy</button>
+                    <div id="save-message" class="save-message hidden"></div>
+                </div>
+            </section>
+
+            <!-- Sección Historial -->
+            <hr>
+            <section class="section">
+                <h2>📈 Historial y Estadísticas</h2>
+                <div class="tabs">
+                    <button class="tab-button active" onclick="showTab('stats')">📊 Estadísticas</button>
+                    <button class="tab-button" onclick="showTab('history')">📅 Historial</button>
+                </div>
+
+                <div id="stats-tab" class="tab-content">
+                    <div id="statistics-container"></div>
+                </div>
+
+                <div id="history-tab" class="tab-content hidden">
+                    <div id="history-container"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
