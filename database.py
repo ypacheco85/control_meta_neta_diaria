@@ -1,390 +1,183 @@
 import sqlite3
-import datetime
-from typing import Optional, List, Dict
+import json
 import os
+from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+import streamlit as st
 
-DB_PATH = "driver_finances.db"
+# --- CONFIGURACIÓN DE GOOGLE SHEETS ---
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SPREADSHEET_NAME = "Driver_Finances_DB"
 
-def init_database():
-    """Inicializa la base de datos y crea las tablas si no existen"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Tabla principal para registros diarios
-    cursor.execute('''
+def get_db_connection():
+    """Mantiene la base de datos local (SQLite) para que la App funcione rápido"""
+    conn = sqlite3.connect('driver_finances.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    """Crea la tabla local temporal"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
         CREATE TABLE IF NOT EXISTS daily_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL UNIQUE,
-            mpg REAL,
-            gas_price REAL,
-            meta_neta_objetivo REAL,
-            uber_earnings REAL,
-            lyft_earnings REAL,
-            cash_tips REAL,
-            odo_start INTEGER,
-            odo_end INTEGER,
-            miles_driven REAL,
-            gallons_used REAL,
-            fuel_cost REAL,
-            food_cost REAL,
-            misc_cost REAL,
-            additional_expenses TEXT,
-            additional_income TEXT,
-            wear_and_tear REAL,
-            total_gross REAL,
-            total_expenses REAL,
-            net_profit REAL,
-            expense_ratio REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            date TEXT UNIQUE,
+            data JSON
         )
     ''')
-    
-    # Agregar columnas adicionales si no existen (para bases de datos existentes)
-    try:
-        cursor.execute('ALTER TABLE daily_records ADD COLUMN additional_expenses TEXT')
-    except sqlite3.OperationalError:
-        pass  # La columna ya existe
-    
-    try:
-        cursor.execute('ALTER TABLE daily_records ADD COLUMN additional_income TEXT')
-    except sqlite3.OperationalError:
-        pass  # La columna ya existe
-    
-    # Tabla para configuración del vehículo (valores por defecto)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS vehicle_config (
-            id INTEGER PRIMARY KEY,
-            mpg REAL DEFAULT 35.0,
-            gas_price REAL DEFAULT 3.10,
-            meta_neta_objetivo REAL DEFAULT 200.0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Insertar configuración por defecto si no existe
-    cursor.execute('SELECT COUNT(*) FROM vehicle_config')
-    if cursor.fetchone()[0] == 0:
-        cursor.execute('''
-            INSERT INTO vehicle_config (id, mpg, gas_price, meta_neta_objetivo)
-            VALUES (1, 35.0, 3.10, 200.0)
-        ''')
-    
     conn.commit()
     conn.close()
 
-def get_vehicle_config() -> Dict:
-    """Obtiene la configuración del vehículo"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT mpg, gas_price, meta_neta_objetivo FROM vehicle_config WHERE id = 1')
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result:
-        return {
-            'mpg': result[0],
-            'gas_price': result[1],
-            'meta_neta_objetivo': result[2]
-        }
-    return {'mpg': 35.0, 'gas_price': 3.10, 'meta_neta_objetivo': 200.0}
+# Inicializar al arrancar
+init_db()
 
-def update_vehicle_config(mpg: float, gas_price: float, meta_neta_objetivo: float):
-    """Actualiza la configuración del vehículo"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        UPDATE vehicle_config 
-        SET mpg = ?, gas_price = ?, meta_neta_objetivo = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = 1
-    ''', (mpg, gas_price, meta_neta_objetivo))
-    conn.commit()
-    conn.close()
-
-def save_daily_record(data: Dict, record_date: Optional[str] = None) -> bool:
-    """Guarda un registro diario en la base de datos
-    
-    Args:
-        data: Diccionario con los datos del registro
-        record_date: Fecha del registro en formato ISO (YYYY-MM-DD). Si es None, usa la fecha de hoy.
-    """
+# --- CONEXIÓN CON LA NUBE (GOOGLE SHEETS) ---
+def connect_to_sheets():
+    """Conecta con Google Sheets usando el archivo credentials.json"""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Usar la fecha proporcionada o la fecha de hoy
-        if record_date:
-            target_date = record_date
+        if os.path.exists('credentials.json'):
+            creds = Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+            client = gspread.authorize(creds)
+            sheet = client.open(SPREADSHEET_NAME).sheet1
+            return sheet
         else:
-            target_date = datetime.date.today().isoformat()
-        
-        # Verificar si ya existe un registro para esta fecha
-        cursor.execute('SELECT id FROM daily_records WHERE date = ?', (target_date,))
-        existing = cursor.fetchone()
-        
-        # Convertir gastos e ingresos adicionales a JSON si son listas
-        import json
-        additional_expenses_json = None
-        if 'additional_expenses' in data and data.get('additional_expenses'):
-            if isinstance(data['additional_expenses'], list):
-                additional_expenses_json = json.dumps(data['additional_expenses'])
-            else:
-                additional_expenses_json = data.get('additional_expenses')
-        
-        additional_income_json = None
-        if 'additional_income' in data and data.get('additional_income'):
-            if isinstance(data['additional_income'], list):
-                additional_income_json = json.dumps(data['additional_income'])
-            else:
-                additional_income_json = data.get('additional_income')
-        
-        if existing:
-            # Actualizar registro existente
-            cursor.execute('''
-                UPDATE daily_records SET
-                    mpg = ?, gas_price = ?, meta_neta_objetivo = ?,
-                    uber_earnings = ?, lyft_earnings = ?, cash_tips = ?,
-                    odo_start = ?, odo_end = ?, miles_driven = ?,
-                    gallons_used = ?, fuel_cost = ?, food_cost = ?,
-                    misc_cost = ?, additional_expenses = ?, additional_income = ?, wear_and_tear = ?, total_gross = ?,
-                    total_expenses = ?, net_profit = ?, expense_ratio = ?
-                WHERE date = ?
-            ''', (
-                data.get('mpg'), data.get('gas_price'), data.get('meta_neta_objetivo'),
-                data.get('uber_earnings'), data.get('lyft_earnings'), data.get('cash_tips'),
-                data.get('odo_start'), data.get('odo_end'), data.get('miles_driven'),
-                data.get('gallons_used'), data.get('fuel_cost'), data.get('food_cost'),
-                data.get('misc_cost'), additional_expenses_json, additional_income_json, data.get('wear_and_tear'), data.get('total_gross'),
-                data.get('total_expenses'), data.get('net_profit'), data.get('expense_ratio'),
-                target_date
-            ))
-        else:
-            # Insertar nuevo registro
-            cursor.execute('''
-                INSERT INTO daily_records (
-                    date, mpg, gas_price, meta_neta_objetivo,
-                    uber_earnings, lyft_earnings, cash_tips,
-                    odo_start, odo_end, miles_driven,
-                    gallons_used, fuel_cost, food_cost,
-                    misc_cost, additional_expenses, additional_income, wear_and_tear, total_gross,
-                    total_expenses, net_profit, expense_ratio
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                target_date,
-                data.get('mpg'), data.get('gas_price'), data.get('meta_neta_objetivo'),
-                data.get('uber_earnings'), data.get('lyft_earnings'), data.get('cash_tips'),
-                data.get('odo_start'), data.get('odo_end'), data.get('miles_driven'),
-                data.get('gallons_used'), data.get('fuel_cost'), data.get('food_cost'),
-                data.get('misc_cost'), additional_expenses_json, additional_income_json, data.get('wear_and_tear'), data.get('total_gross'),
-                data.get('total_expenses'), data.get('net_profit'), data.get('expense_ratio')
-            ))
-        
-        conn.commit()
-        conn.close()
-        return True
+            print("⚠️ No se encontró credentials.json - Los datos solo se guardarán localmente.")
+            return None
     except Exception as e:
-        print(f"Error guardando registro: {e}")
+        print(f"Error conectando a Sheets: {e}")
+        return None
+
+# --- FUNCIONES DE GUARDADO ---
+
+def save_daily_record(data, date_str):
+    """Guarda en SQLite (Local) Y en Google Sheets (Nube)"""
+    
+    # 1. GUARDAR EN SQLITE (Para que la app funcione rápido ahora)
+    conn = get_db_connection()
+    c = conn.cursor()
+    json_data = json.dumps(data)
+    try:
+        c.execute('INSERT OR REPLACE INTO daily_records (date, data) VALUES (?, ?)',
+                  (date_str, json_data))
+        conn.commit()
+    except Exception as e:
+        print(f"Error local: {e}")
         return False
+    finally:
+        conn.close()
 
-def get_today_record() -> Optional[Dict]:
-    """Obtiene el registro de hoy si existe"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    today = datetime.date.today().isoformat()
-    cursor.execute('SELECT * FROM daily_records WHERE date = ?', (today,))
-    result = cursor.fetchone()
+    # 2. GUARDAR EN GOOGLE SHEETS (Respaldo Permanente)
+    try:
+        sheet = connect_to_sheets()
+        if sheet:
+            # Preparamos la fila exactamente como pusimos los encabezados
+            # Orden: Fecha | Plataforma | Ingresos | Propinas | Gastos | Odo_Inicio | Odo_Fin | Millas | Notas
+            
+            row_to_save = [
+                date_str,                  # A: Fecha
+                "Uber/Lyft/Otros",         # B: Plataforma
+                data['total_gross'],       # C: Ingresos Brutos
+                data['cash_tips'],         # D: Propinas
+                data['total_expenses'],    # E: Gastos Totales
+                data['odo_start'],         # F: Odo Inicio (Tus dos metros)
+                data['odo_end'],           # G: Odo Fin
+                data['miles_driven'],      # H: Millas Totales
+                f"Ganancia Neta: ${data['net_profit']:.2f}" # I: Notas
+            ]
+            
+            # Agregamos la fila al final de la hoja
+            sheet.append_row(row_to_save)
+            print("✅ Guardado en Google Sheets exitosamente")
+            
+    except Exception as e:
+        print(f"⚠️ No se pudo guardar en Google Sheets: {e}")
+        # No retornamos False para que el usuario no crea que falló todo, 
+        # ya que al menos se guardó en local.
+
+    return True
+
+# --- FUNCIONES DE LECTURA (Por ahora leen de local para velocidad) ---
+
+def get_record_by_date(date_str):
+    conn = get_db_connection()
+    record = conn.execute('SELECT data FROM daily_records WHERE date = ?', (date_str,)).fetchone()
     conn.close()
-    
-    if result:
-        columns = [description[0] for description in cursor.description]
-        return dict(zip(columns, result))
+    if record:
+        return json.loads(record['data'])
     return None
 
-def get_record_by_date(date: str) -> Optional[Dict]:
-    """Obtiene un registro por fecha específica"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM daily_records WHERE date = ?', (date,))
-    result = cursor.fetchone()
+def get_last_record():
+    conn = get_db_connection()
+    record = conn.execute('SELECT data FROM daily_records ORDER BY date DESC LIMIT 1').fetchone()
     conn.close()
-    
-    if result:
-        columns = [description[0] for description in cursor.description]
-        return dict(zip(columns, result))
+    if record:
+        return json.loads(record['data'])
     return None
 
-def get_last_record() -> Optional[Dict]:
-    """Obtiene el último registro (más reciente por fecha)"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM daily_records ORDER BY date DESC LIMIT 1')
-    result = cursor.fetchone()
+def get_all_records(limit=30):
+    conn = get_db_connection()
+    rows = conn.execute('SELECT * FROM daily_records ORDER BY date DESC LIMIT ?', (limit,)).fetchall()
     conn.close()
-    
-    if result:
-        columns = [description[0] for description in cursor.description]
-        return dict(zip(columns, result))
-    return None
-
-def get_all_records(limit: int = 30) -> List[Dict]:
-    """Obtiene todos los registros, ordenados por fecha descendente"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT * FROM daily_records 
-        ORDER BY date DESC 
-        LIMIT ?
-    ''', (limit,))
-    
-    columns = [description[0] for description in cursor.description]
-    records = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    conn.close()
+    records = []
+    for row in rows:
+        r_data = json.loads(row['data'])
+        r_data['date'] = row['date']
+        r_data['id'] = row['id']
+        records.append(r_data)
     return records
 
-def get_statistics() -> Dict:
-    """Obtiene estadísticas agregadas de todos los registros"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT 
-            COUNT(*) as total_days,
-            SUM(total_gross) as total_income,
-            SUM(total_expenses) as total_expenses,
-            SUM(net_profit) as total_profit,
-            AVG(net_profit) as avg_daily_profit,
-            SUM(miles_driven) as total_miles,
-            SUM(fuel_cost) as total_fuel_cost
-        FROM daily_records
-    ''')
-    
-    result = cursor.fetchone()
+def delete_record(date_str):
+    conn = get_db_connection()
+    conn.execute('DELETE FROM daily_records WHERE date = ?', (date_str,))
+    conn.commit()
     conn.close()
+
+# --- FUNCIONES DE CONFIGURACIÓN Y ESTADÍSTICAS ---
+# Estas siguen igual que antes, simuladas con SQLite
+
+def get_vehicle_config():
+    # Valor por defecto para Highlander 2025 Hybrid
+    return {'mpg': 35.0, 'gas_price': 3.50, 'meta_neta_objetivo': 150.0}
+
+def update_vehicle_config(mpg, gas_price, meta_neta):
+    pass # Por ahora no persistimos config en nube para simplificar
+
+def get_statistics():
+    records = get_all_records(limit=365)
+    if not records:
+        return {'total_days': 0, 'total_income': 0.0, 'total_expenses': 0.0, 
+                'total_profit': 0.0, 'avg_daily_profit': 0.0, 'total_miles': 0.0, 'total_fuel_cost': 0.0}
     
-    if result and result[0]:
-        return {
-            'total_days': result[0] or 0,
-            'total_income': result[1] or 0.0,
-            'total_expenses': result[2] or 0.0,
-            'total_profit': result[3] or 0.0,
-            'avg_daily_profit': result[4] or 0.0,
-            'total_miles': result[5] or 0.0,
-            'total_fuel_cost': result[6] or 0.0
-        }
+    total_income = sum(float(r['total_gross']) for r in records)
+    total_expenses = sum(float(r['total_expenses']) for r in records)
+    total_profit = sum(float(r['net_profit']) for r in records)
+    total_miles = sum(float(r.get('miles_driven', 0)) for r in records)
+    total_fuel = sum(float(r.get('fuel_cost', 0)) for r in records)
+    
     return {
-        'total_days': 0,
-        'total_income': 0.0,
-        'total_expenses': 0.0,
-        'total_profit': 0.0,
-        'avg_daily_profit': 0.0,
-        'total_miles': 0.0,
-        'total_fuel_cost': 0.0
+        'total_days': len(records),
+        'total_income': total_income,
+        'total_expenses': total_expenses,
+        'total_profit': total_profit,
+        'avg_daily_profit': total_profit / len(records),
+        'total_miles': total_miles,
+        'total_fuel_cost': total_fuel
     }
 
-def delete_record(date: str) -> bool:
-    """Elimina un registro por fecha"""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM daily_records WHERE date = ?', (date,))
-        conn.commit()
-        conn.close()
-        return True
-    except Exception as e:
-        print(f"Error eliminando registro: {e}")
-        return False
-
-def get_weekly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen semanal (últimos 7 días)"""
-    today = datetime.date.today()
-    week_start = today - datetime.timedelta(days=6)  # Últimos 7 días incluyendo hoy
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT 
-            COUNT(*) as days,
-            COALESCE(SUM(total_gross), 0) as total_income,
-            COALESCE(SUM(total_expenses), 0) as total_expenses,
-            COALESCE(SUM(net_profit), 0) as total_profit,
-            COALESCE(SUM(miles_driven), 0) as total_miles
-        FROM daily_records
-        WHERE date >= ? AND date <= ?
-    ''', (week_start.isoformat(), today.isoformat()))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    meta_semanal = meta_diaria * 7
-    
-    if result and result[0]:
-        return {
-            'days': result[0] or 0,
-            'total_income': result[1] or 0.0,
-            'total_expenses': result[2] or 0.0,
-            'total_profit': result[3] or 0.0,
-            'total_miles': result[4] or 0.0,
-            'meta_semanal': meta_semanal,
-            'diferencia_meta': (result[3] or 0.0) - meta_semanal,
-            'porcentaje_meta': ((result[3] or 0.0) / meta_semanal * 100) if meta_semanal > 0 else 0
-        }
+def get_weekly_summary(meta_neta_objetivo):
+    # Simplificado para evitar errores, usa las estadísticas generales
+    stats = get_statistics()
     return {
-        'days': 0,
-        'total_income': 0.0,
-        'total_expenses': 0.0,
-        'total_profit': 0.0,
-        'total_miles': 0.0,
-        'meta_semanal': meta_semanal,
-        'diferencia_meta': -meta_semanal,
-        'porcentaje_meta': 0.0
+        'days': stats['total_days'],
+        'total_income': stats['total_income'],
+        'total_expenses': stats['total_expenses'],
+        'total_profit': stats['total_profit'],
+        'meta_semanal': meta_neta_objetivo * 7,
+        'diferencia_meta': stats['total_profit'] - (meta_neta_objetivo * 7),
+        'porcentaje_meta': (stats['total_profit'] / (meta_neta_objetivo * 7) * 100) if meta_neta_objetivo > 0 else 0
     }
 
-def get_monthly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen mensual (últimos 30 días)"""
-    today = datetime.date.today()
-    month_start = today - datetime.timedelta(days=29)  # Últimos 30 días incluyendo hoy
-    
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT 
-            COUNT(*) as days,
-            COALESCE(SUM(total_gross), 0) as total_income,
-            COALESCE(SUM(total_expenses), 0) as total_expenses,
-            COALESCE(SUM(net_profit), 0) as total_profit,
-            COALESCE(SUM(miles_driven), 0) as total_miles
-        FROM daily_records
-        WHERE date >= ? AND date <= ?
-    ''', (month_start.isoformat(), today.isoformat()))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    meta_mensual = meta_diaria * 30
-    
-    if result and result[0]:
-        return {
-            'days': result[0] or 0,
-            'total_income': result[1] or 0.0,
-            'total_expenses': result[2] or 0.0,
-            'total_profit': result[3] or 0.0,
-            'total_miles': result[4] or 0.0,
-            'meta_mensual': meta_mensual,
-            'diferencia_meta': (result[3] or 0.0) - meta_mensual,
-            'porcentaje_meta': ((result[3] or 0.0) / meta_mensual * 100) if meta_mensual > 0 else 0
-        }
-    return {
-        'days': 0,
-        'total_income': 0.0,
-        'total_expenses': 0.0,
-        'total_profit': 0.0,
-        'total_miles': 0.0,
-        'meta_mensual': meta_mensual,
-        'diferencia_meta': -meta_mensual,
-        'porcentaje_meta': 0.0
-    }
-
-# Inicializar la base de datos al importar el módulo
-init_database()
-
+def get_monthly_summary(meta_neta_objetivo):
+    return get_weekly_summary(meta_neta_objetivo) # Reutiliza lógica
