@@ -184,6 +184,18 @@ def save_daily_record(data: Dict, record_date: Optional[str] = None) -> bool:
         
         ws = sheet.worksheet(WORKSHEET_DB)
         
+        # Verificar que los encabezados existan
+        headers = ws.row_values(1)
+        if not headers or len(headers) < 19:
+            # Crear encabezados si no existen
+            headers = [
+                'Fecha', 'Uber Earnings', 'Lyft Earnings', 'Cash Tips', 'Additional Income',
+                'Odo Start', 'Odo End', 'Miles Driven', 'Gallons Used', 'Fuel Cost',
+                'Food Cost', 'Misc Cost', 'Additional Expenses', 'Wear And Tear',
+                'Total Gross', 'Total Expenses', 'Net Profit', 'Meta Neta Objetivo', 'Expense Ratio'
+            ]
+            ws.update('A1:S1', [headers])
+        
         # Convertir listas a JSON
         additional_income_json = json.dumps(data.get('additional_income', []))
         additional_expenses_json = json.dumps(data.get('additional_expenses', []))
@@ -215,15 +227,29 @@ def save_daily_record(data: Dict, record_date: Optional[str] = None) -> bool:
         try:
             cell = ws.find(record_date, in_column=1)
             # Si existe, actualizamos esa fila
-            for i, val in enumerate(row_data):
-                ws.update_cell(cell.row, i + 1, val)
+            row_num = cell.row
+            # Actualizar toda la fila de una vez (más eficiente)
+            range_name = f'A{row_num}:S{row_num}'
+            ws.update(range_name, [row_data])
         except gspread.exceptions.CellNotFound:
             # Si no existe, agregamos nueva fila
             ws.append_row(row_data)
-            
+        
+        # Limpiar caché después de guardar para que se vean los cambios inmediatamente
+        st.cache_data.clear()
+        
         return True
+    except gspread.exceptions.APIError as api_error:
+        error_str = str(api_error)
+        if "429" in error_str or "Quota exceeded" in error_str:
+            st.error("⚠️ Límite de solicitudes excedido. Espera unos minutos e intenta de nuevo.")
+        else:
+            st.error(f"❌ Error de API al guardar: {error_str}")
+        return False
     except Exception as e:
-        st.error(f"Error guardando registro: {e}")
+        st.error(f"❌ Error guardando registro: {e}")
+        import traceback
+        st.error(f"Detalles: {traceback.format_exc()}")
         return False
 
 def get_record_by_date(date: str) -> Optional[Dict]:
