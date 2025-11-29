@@ -18,8 +18,9 @@ if 'view_option' not in st.session_state:
 # Cargar configuración del vehículo desde Google Sheets
 try:
     vehicle_config = db.get_vehicle_config()
-except:
+except Exception as e:
     vehicle_config = {'mpg': 35.0, 'gas_price': 3.10, 'meta_neta_objetivo': 200.0}
+    # Si hay error, se mostrará en get_connection()
 
 # --- BARRA LATERAL: CONFIGURACIÓN DEL VEHÍCULO ---
 st.sidebar.header("⚙️ Configuración del Auto")
@@ -115,7 +116,15 @@ if view_option == "📆 Semanal":
         st.sidebar.progress(min(weekly['porcentaje_meta'] / 100, 1.0))
         st.sidebar.caption(f"Progreso: {weekly['porcentaje_meta']:.1f}%")
     except Exception as e:
-        st.sidebar.error(f"Error cargando datos semanales: {e}")
+        error_str = str(e)
+        if "429" in error_str or "Quota exceeded" in error_str:
+            st.sidebar.error("⚠️ Límite de solicitudes excedido")
+            st.sidebar.warning("Espera 1-2 minutos y recarga la página")
+            if st.sidebar.button("🔄 Limpiar caché y reintentar", key="clear_cache_weekly"):
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.sidebar.error(f"Error cargando datos semanales: {e}")
 
 elif view_option == "📅 Mensual":
     st.sidebar.markdown("### Resumen Mensual")
@@ -140,7 +149,15 @@ elif view_option == "📅 Mensual":
         st.sidebar.progress(min(monthly['porcentaje_meta'] / 100, 1.0))
         st.sidebar.caption(f"Progreso: {monthly['porcentaje_meta']:.1f}%")
     except Exception as e:
-        st.sidebar.error(f"Error cargando datos mensuales: {e}")
+        error_str = str(e)
+        if "429" in error_str or "Quota exceeded" in error_str:
+            st.sidebar.error("⚠️ Límite de solicitudes excedido")
+            st.sidebar.warning("Espera 1-2 minutos y recarga la página")
+            if st.sidebar.button("🔄 Limpiar caché y reintentar", key="clear_cache_monthly"):
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.sidebar.error(f"Error cargando datos mensuales: {e}")
 
 # Mostrar formulario solo si está en modo Diario
 if view_option == "📅 Diario":
@@ -544,7 +561,16 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             else:
                 st.info("No hay registros para esta semana aún.")
         except Exception as e:
-            st.error(f"Error cargando datos semanales: {e}")
+            error_str = str(e)
+            if "429" in error_str or "Quota exceeded" in error_str:
+                st.error("⚠️ **Límite de solicitudes excedido**")
+                st.warning("Has excedido el límite de solicitudes a Google Sheets API. Por favor espera 1-2 minutos antes de intentar de nuevo.")
+                st.info("💡 **Sugerencia:** La aplicación usa caché para reducir las llamadas. Evita hacer clic múltiples veces rápidamente.")
+                if st.button("🔄 Limpiar caché y reintentar", key="clear_cache_main_weekly"):
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.error(f"Error cargando datos semanales: {e}")
     
     elif view_option == "📅 Mensual":
         st.subheader("📅 Resumen Mensual (Últimos 30 días)")
@@ -592,4 +618,13 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             else:
                 st.info("No hay registros para este mes aún.")
         except Exception as e:
-            st.error(f"Error cargando datos mensuales: {e}")
+            error_str = str(e)
+            if "429" in error_str or "Quota exceeded" in error_str:
+                st.error("⚠️ **Límite de solicitudes excedido**")
+                st.warning("Has excedido el límite de solicitudes a Google Sheets API. Por favor espera 1-2 minutos antes de intentar de nuevo.")
+                st.info("💡 **Sugerencia:** La aplicación usa caché para reducir las llamadas. Evita hacer clic múltiples veces rápidamente.")
+                if st.button("🔄 Limpiar caché y reintentar", key="clear_cache_main_monthly"):
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.error(f"Error cargando datos mensuales: {e}")

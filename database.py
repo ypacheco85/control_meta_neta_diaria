@@ -10,9 +10,10 @@ SHEET_NAME = "App_Uber_2025"
 WORKSHEET_DB = "Driver_Finances_DB"
 WORKSHEET_CONFIG = "Config"
 
-# --- CONEXIÓN CON GOOGLE SHEETS ---
+# --- CONEXIÓN CON GOOGLE SHEETS (CON CACHÉ) ---
+@st.cache_resource(ttl=300)  # Cache por 5 minutos
 def get_connection():
-    """Conecta con Google Sheets usando los secretos de Streamlit"""
+    """Conecta con Google Sheets usando los secretos de Streamlit (con caché)"""
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -22,23 +23,71 @@ def get_connection():
         # Cargar credenciales desde st.secrets
         credentials_dict = dict(st.secrets["gcp_service_account"])
         # Arreglar el formato de la llave privada
-        credentials_dict["private_key"] = credentials_dict["private_key"].replace("\\n", "\n")
+        if "private_key" in credentials_dict:
+            credentials_dict["private_key"] = credentials_dict["private_key"].replace("\\n", "\n")
         
         creds = Credentials.from_service_account_info(credentials_dict, scopes=scopes)
         client = gspread.authorize(creds)
         
         # Abrir la hoja de cálculo por nombre
-        sheet = client.open(SHEET_NAME)
-        return sheet
+        try:
+            sheet = client.open(SHEET_NAME)
+            # Verificar que realmente obtuvimos un objeto Spreadsheet
+            if sheet is None:
+                raise Exception("No se pudo obtener el objeto Spreadsheet")
+            return sheet
+        except gspread.exceptions.SpreadsheetNotFound:
+            st.error(f"❌ No se encontró el Google Sheet '{SHEET_NAME}'. Por favor:")
+            st.info("1. Crea un Google Sheet con ese nombre exacto\n2. Compártelo con el email de la cuenta de servicio\n3. Verifica que tenga permisos de 'Editor'")
+            return None
+        except gspread.exceptions.APIError as api_error:
+            error_str = str(api_error)
+            # Manejar error 429 (Quota exceeded)
+            if "429" in error_str or "Quota exceeded" in error_str:
+                st.error("⚠️ **Límite de solicitudes excedido**")
+                st.warning("Has excedido el límite de solicitudes a Google Sheets API. Por favor espera unos minutos antes de intentar de nuevo.")
+                st.info("**Solución:**\n1. Espera 1-2 minutos antes de recargar\n2. La aplicación usa caché para reducir las llamadas\n3. Evita hacer clic múltiples veces rápidamente")
+                return None
+            elif "Response" in error_str or "200" in error_str:
+                st.error(f"❌ Error de acceso al Google Sheet '{SHEET_NAME}'")
+                st.warning("El Sheet existe pero puede haber un problema de permisos o acceso.")
+                st.info("**Solución:**\n1. Verifica que el Google Sheet 'App_Uber_2025' existe\n2. Compártelo con el email de la cuenta de servicio (Editor)\n3. El email de la cuenta está en tus secrets de Streamlit (campo 'client_email')")
+            else:
+                st.error(f"Error de API: {error_str}")
+            return None
+        except Exception as sheet_error:
+            error_str = str(sheet_error)
+            # Manejar el caso específico de Response [200]
+            if "Response" in error_str or "<Response" in error_str:
+                st.error(f"❌ Error de conexión con Google Sheets")
+                st.warning("Parece que hay un problema al acceder al Sheet, aunque la conexión fue exitosa.")
+                st.info("**Posibles causas:**\n1. El Google Sheet no existe o tiene otro nombre\n2. La cuenta de servicio no tiene permisos\n3. El Sheet no está compartido correctamente")
+                st.info("**Solución:**\n1. Verifica que existe un Google Sheet llamado exactamente 'App_Uber_2025'\n2. Compártelo con el email de la cuenta de servicio\n3. Dale permisos de 'Editor'")
+            else:
+                st.error(f"Error al abrir la hoja '{SHEET_NAME}': {error_str}")
+                st.info("Verifica que el Google Sheet existe y está compartido con la cuenta de servicio")
+            return None
+    except KeyError as e:
+        st.error(f"❌ Error de configuración: No se encontró 'gcp_service_account' en los secrets de Streamlit")
+        st.info("Por favor configura los secrets de Streamlit. Ver STREAMLIT_SECRETS.md para más información.")
+        return None
     except Exception as e:
-        st.error(f"Error al conectar con Google Sheets '{SHEET_NAME}': {e}")
-        st.stop()
+        error_msg = str(e)
+        # Si el error contiene información de respuesta HTTP, extraer solo el mensaje útil
+        if "<Response" in error_msg:
+            st.error(f"❌ Error de conexión con Google Sheets")
+            st.info(f"Detalles: {error_msg}")
+            st.info("Verifica:\n1. Que los secrets de Streamlit estén configurados correctamente\n2. Que el Google Sheet 'App_Uber_2025' exista\n3. Que la cuenta de servicio tenga permisos de acceso")
+        else:
+            st.error(f"Error al conectar con Google Sheets '{SHEET_NAME}': {error_msg}")
         return None
 
 def init_worksheets():
     """Inicializa las hojas si no existen y crea los encabezados"""
     try:
         sheet = get_connection()
+        if sheet is None:
+            return
         
         # Inicializar hoja de configuración
         try:
@@ -87,6 +136,8 @@ def get_vehicle_config() -> Dict:
     """Obtiene la configuración del vehículo desde Google Sheets"""
     try:
         sheet = get_connection()
+        if sheet is None:
+            return {'mpg': 35.0, 'gas_price': 3.10, 'meta_neta_objetivo': 200.0}
         ws = sheet.worksheet(WORKSHEET_CONFIG)
         
         # Leer valores de la fila 2 (A2, B2, C2)
@@ -108,6 +159,8 @@ def update_vehicle_config(mpg: float, gas_price: float, meta_neta_objetivo: floa
     """Actualiza la configuración del vehículo en Google Sheets"""
     try:
         sheet = get_connection()
+        if sheet is None:
+            return
         ws = sheet.worksheet(WORKSHEET_CONFIG)
         # Actualizar celdas específicas
         ws.update('A2:C2', [[mpg, gas_price, meta_neta_objetivo]])
@@ -122,10 +175,13 @@ def save_daily_record(data: Dict, record_date: Optional[str] = None) -> bool:
             record_date = datetime.now().date().isoformat()
         
         sheet = get_connection()
-        ws = sheet.worksheet(WORKSHEET_DB)
+        if sheet is None:
+            return False
         
         # Inicializar hojas si es necesario
         init_worksheets()
+        
+        ws = sheet.worksheet(WORKSHEET_DB)
         
         # Convertir listas a JSON
         additional_income_json = json.dumps(data.get('additional_income', []))
@@ -173,10 +229,13 @@ def get_record_by_date(date: str) -> Optional[Dict]:
     """Obtiene un registro por fecha específica"""
     try:
         sheet = get_connection()
-        ws = sheet.worksheet(WORKSHEET_DB)
+        if sheet is None:
+            return None
         
         # Inicializar hojas si es necesario
         init_worksheets()
+        
+        ws = sheet.worksheet(WORKSHEET_DB)
         
         cell = ws.find(date, in_column=1)
         row_values = ws.row_values(cell.row)
@@ -240,6 +299,8 @@ def get_last_record() -> Optional[Dict]:
     """Obtiene el último registro ingresado para sacar el odómetro final"""
     try:
         sheet = get_connection()
+        if sheet is None:
+            return None
         ws = sheet.worksheet(WORKSHEET_DB)
         all_rows = ws.get_all_values()
         
@@ -261,14 +322,18 @@ def get_last_record() -> Optional[Dict]:
     except Exception as e:
         return None
 
+@st.cache_data(ttl=60)  # Cache por 1 minuto para reducir llamadas a la API
 def get_all_records(limit: int = 30) -> List[Dict]:
-    """Obtiene todos los registros, ordenados por fecha descendente"""
+    """Obtiene todos los registros, ordenados por fecha descendente (con caché)"""
     try:
         sheet = get_connection()
-        ws = sheet.worksheet(WORKSHEET_DB)
+        if sheet is None:
+            return []
         
         # Inicializar hojas si es necesario
         init_worksheets()
+        
+        ws = sheet.worksheet(WORKSHEET_DB)
         
         # Obtener todos los registros, saltando el encabezado
         all_rows = ws.get_all_values()
@@ -353,8 +418,9 @@ def get_all_records(limit: int = 30) -> List[Dict]:
         return []
 
 def get_statistics() -> Dict:
-    """Obtiene estadísticas agregadas de todos los registros"""
+    """Obtiene estadísticas agregadas de todos los registros - usa datos cacheados"""
     try:
+        # Usar get_all_records que ya tiene caché
         records = get_all_records(limit=365)
         
         if not records:
@@ -397,8 +463,9 @@ def get_statistics() -> Dict:
         }
 
 def get_weekly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen semanal (últimos 7 días)"""
+    """Obtiene el resumen semanal (últimos 7 días) - usa datos cacheados"""
     try:
+        # Usar get_all_records que ya tiene caché
         records = get_all_records(limit=100)
         today = datetime.now().date()
         week_start = today - timedelta(days=6)
@@ -447,8 +514,9 @@ def get_weekly_summary(meta_diaria: float) -> Dict:
         }
 
 def get_monthly_summary(meta_diaria: float) -> Dict:
-    """Obtiene el resumen mensual (últimos 30 días)"""
+    """Obtiene el resumen mensual (últimos 30 días) - usa datos cacheados"""
     try:
+        # Usar get_all_records que ya tiene caché
         records = get_all_records(limit=100)
         today = datetime.now().date()
         month_start = today - timedelta(days=29)
@@ -500,6 +568,8 @@ def delete_record(date: str) -> bool:
     """Elimina un registro por fecha"""
     try:
         sheet = get_connection()
+        if sheet is None:
+            return False
         ws = sheet.worksheet(WORKSHEET_DB)
         cell = ws.find(date, in_column=1)
         ws.delete_rows(cell.row)
