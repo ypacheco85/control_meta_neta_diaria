@@ -291,14 +291,18 @@ def get_record_by_date(date: str) -> Optional[Dict]:
         
         def safe_float(val, default=0.0):
             try:
-                return float(val) if val else default
-            except:
+                if val is None or val == '' or (isinstance(val, str) and not val.strip()):
+                    return default
+                return float(str(val).strip())
+            except (ValueError, TypeError):
                 return default
         
         def safe_int(val, default=0):
             try:
-                return int(float(val)) if val else default
-            except:
+                if val is None or val == '' or (isinstance(val, str) and not val.strip()):
+                    return default
+                return int(float(str(val).strip()))
+            except (ValueError, TypeError):
                 return default
         
         return {
@@ -372,9 +376,9 @@ def get_all_records(limit: int = 30) -> List[Dict]:
             return []
         
         records = []
-        headers = all_rows[0]
+        headers = [h.strip() if isinstance(h, str) else str(h) for h in all_rows[0]]  # Limpiar espacios en encabezados
         
-        # Mapeo de nombres de columnas
+        # Mapeo de nombres de columnas (normalizados)
         column_map = {
             'Fecha': 'date',
             'Uber Earnings': 'uber_earnings',
@@ -397,40 +401,80 @@ def get_all_records(limit: int = 30) -> List[Dict]:
             'Expense Ratio': 'expense_ratio'
         }
         
+        # Función auxiliar para convertir valores
+        def safe_convert_float(val, default=0.0):
+            try:
+                if val is None or val == '' or (isinstance(val, str) and not val.strip()):
+                    return default
+                return float(str(val).strip())
+            except (ValueError, TypeError):
+                return default
+        
+        def safe_convert_int(val, default=0):
+            try:
+                if val is None or val == '' or (isinstance(val, str) and not val.strip()):
+                    return default
+                return int(float(str(val).strip()))
+            except (ValueError, TypeError):
+                return default
+        
         # Procesar filas (saltando encabezado)
         for row in all_rows[1:]:
-            if not row[0]:  # Si no hay fecha, saltar
+            if not row or not row[0]:  # Si no hay fecha, saltar
                 continue
                 
             try:
                 record = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        value = row[i]
-                        field_name = column_map.get(header, header.lower().replace(' ', '_'))
-                        
-                        # Convertir valores según el tipo
-                        if header == 'Fecha':
-                            record['date'] = value
-                        elif header == 'Additional Income':
-                            try:
-                                record['additional_income'] = json.loads(value) if value else []
-                            except:
-                                record['additional_income'] = []
-                        elif header == 'Additional Expenses':
-                            try:
-                                record['additional_expenses'] = json.loads(value) if value else []
-                            except:
-                                record['additional_expenses'] = []
-                        elif header in ['Odo Start', 'Odo End']:
-                            record[field_name] = int(float(value)) if value else 0
-                        elif header in ['Uber Earnings', 'Lyft Earnings', 'Cash Tips', 'Miles Driven', 
-                                     'Gallons Used', 'Fuel Cost', 'Food Cost', 'Misc Cost', 
-                                     'Wear And Tear', 'Total Gross', 'Total Expenses', 'Net Profit',
-                                     'Meta Neta Objetivo', 'Expense Ratio']:
-                            record[field_name] = float(value) if value else 0.0
-                        else:
-                            record[field_name] = value
+                # Usar índices de columna como respaldo si los encabezados no coinciden
+                # Orden esperado: Fecha, Uber, Lyft, Cash Tips, Additional Income, Odo Start, Odo End,
+                # Miles Driven, Gallons Used, Fuel Cost, Food Cost, Misc Cost, Additional Expenses,
+                # Wear And Tear, Total Gross, Total Expenses, Net Profit, Meta Neta Objetivo, Expense Ratio
+                
+                # Leer por índice directamente (más confiable)
+                if len(row) > 0:
+                    record['date'] = str(row[0]).strip() if row[0] else ''
+                if len(row) > 1:
+                    record['uber_earnings'] = safe_convert_float(row[1], 0.0)
+                if len(row) > 2:
+                    record['lyft_earnings'] = safe_convert_float(row[2], 0.0)
+                if len(row) > 3:
+                    record['cash_tips'] = safe_convert_float(row[3], 0.0)
+                if len(row) > 4:
+                    try:
+                        record['additional_income'] = json.loads(row[4]) if row[4] and str(row[4]).strip() else []
+                    except:
+                        record['additional_income'] = []
+                if len(row) > 5:
+                    record['odo_start'] = safe_convert_int(row[5], 0)
+                if len(row) > 6:
+                    record['odo_end'] = safe_convert_int(row[6], 0)
+                if len(row) > 7:
+                    record['miles_driven'] = safe_convert_float(row[7], 0.0)
+                if len(row) > 8:
+                    record['gallons_used'] = safe_convert_float(row[8], 0.0)
+                if len(row) > 9:
+                    record['fuel_cost'] = safe_convert_float(row[9], 0.0)
+                if len(row) > 10:
+                    record['food_cost'] = safe_convert_float(row[10], 0.0)
+                if len(row) > 11:
+                    record['misc_cost'] = safe_convert_float(row[11], 0.0)
+                if len(row) > 12:
+                    try:
+                        record['additional_expenses'] = json.loads(row[12]) if row[12] and str(row[12]).strip() else []
+                    except:
+                        record['additional_expenses'] = []
+                if len(row) > 13:
+                    record['wear_and_tear'] = safe_convert_float(row[13], 0.0)
+                if len(row) > 14:
+                    record['total_gross'] = safe_convert_float(row[14], 0.0)
+                if len(row) > 15:
+                    record['total_expenses'] = safe_convert_float(row[15], 0.0)
+                if len(row) > 16:
+                    record['net_profit'] = safe_convert_float(row[16], 0.0)
+                if len(row) > 17:
+                    record['meta_neta_objetivo'] = safe_convert_float(row[17], 0.0)
+                if len(row) > 18:
+                    record['expense_ratio'] = safe_convert_float(row[18], 0.0)
                 
                 if record.get('date'):  # Solo agregar si tiene fecha
                     records.append(record)
