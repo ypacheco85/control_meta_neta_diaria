@@ -42,9 +42,20 @@ if mpg != vehicle_config['mpg'] or gas_price != vehicle_config['gas_price'] or m
 # --- SELECTOR DE FECHA ---
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Seleccionar Fecha")
+
+# Si hay una fecha de edición en session_state, usarla
+if 'editing_date' in st.session_state and st.session_state.editing_date:
+    default_date = datetime.strptime(st.session_state.editing_date, '%Y-%m-%d').date()
+    # Limpiar editing_date después de usarla para que no persista
+    editing_date_str = st.session_state.editing_date
+    del st.session_state.editing_date
+else:
+    default_date = datetime.now().date()
+    editing_date_str = None
+
 selected_date = st.sidebar.date_input(
     "Fecha del registro:",
-    value=datetime.now().date(),
+    value=default_date,
     max_value=datetime.now().date(),
     help="Selecciona la fecha del registro que deseas ver o editar"
 )
@@ -55,6 +66,13 @@ try:
     selected_record = db.get_record_by_date(selected_date_str)
 except:
     selected_record = None
+
+# Si se está editando, forzar recarga de datos
+if editing_date_str and editing_date_str == selected_date_str:
+    if 'last_loaded_date' in st.session_state:
+        del st.session_state.last_loaded_date
+    # Asegurar que estamos en modo Diario para mostrar el formulario
+    st.session_state.view_option = "📅 Diario"
 
 # Mostrar información del registro seleccionado
 if selected_record:
@@ -85,10 +103,18 @@ st.sidebar.markdown("---")
 st.sidebar.header("📊 Navegación")
 
 # Selector de vista (mover al inicio para controlar qué se muestra)
+# Si estamos editando, forzar vista Diario
+if 'editing_date' in st.session_state and st.session_state.editing_date:
+    default_index = 0  # Diario
+else:
+    # Obtener el índice basado en session_state
+    current_view = st.session_state.get('view_option', "📅 Diario")
+    default_index = ["📅 Diario", "📆 Semanal", "📅 Mensual"].index(current_view) if current_view in ["📅 Diario", "📆 Semanal", "📅 Mensual"] else 0
+
 view_option = st.sidebar.radio(
     "Selecciona la vista:",
     ["📅 Diario", "📆 Semanal", "📅 Mensual"],
-    index=0
+    index=default_index
 )
 st.session_state.view_option = view_option
 
@@ -479,9 +505,21 @@ if view_option == "📅 Diario":
     # --- GUARDAR EN BASE DE DATOS ---
     st.markdown("---")
     fecha_label_btn = "Hoy" if selected_date == datetime.now().date() else selected_date.strftime('%d/%m/%Y')
-    col_save1, col_save2, col_save3 = st.columns([1, 1, 1])
-    with col_save2:
-        if st.button(f"💾 Guardar Registro del {fecha_label_btn}", type="primary", use_container_width=True):
+    
+    # Determinar si estamos editando un registro existente
+    is_editing = selected_record is not None
+    
+    # Botón flotante en la esquina inferior derecha usando columnas
+    col_save1, col_save2, col_save3 = st.columns([2, 1, 1])
+    with col_save3:
+        if is_editing:
+            button_text = f"💾 Guardar Cambios del {fecha_label_btn}"
+            button_type = "primary"
+        else:
+            button_text = f"💾 Guardar Registro del {fecha_label_btn}"
+            button_type = "primary"
+        
+        if st.button(button_text, type=button_type, use_container_width=True):
             record_data = {
                 'mpg': mpg,
                 'gas_price': gas_price,
@@ -505,7 +543,12 @@ if view_option == "📅 Diario":
                 'expense_ratio': expense_ratio
             }
             if db.save_daily_record(record_data, selected_date_str):
-                st.success(f"✅ Registro del {fecha_label_btn} guardado exitosamente en Google Sheets!")
+                if is_editing:
+                    st.success(f"✅ Cambios del {fecha_label_btn} guardados exitosamente en Google Sheets!")
+                else:
+                    st.success(f"✅ Registro del {fecha_label_btn} guardado exitosamente en Google Sheets!")
+                # Limpiar caché y recargar
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("❌ Error al guardar el registro")
@@ -541,7 +584,8 @@ if view_option == "📅 Diario":
             if records:
                 st.subheader("Últimos 30 Registros")
                 for record in records:
-                    with st.expander(f"📅 {record.get('date', 'Sin fecha')} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
+                    record_date = record.get('date', '')
+                    with st.expander(f"📅 {record_date} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
                         col_h1, col_h2, col_h3 = st.columns(3)
                         col_h1.metric("Ingreso Bruto", f"${float(record.get('total_gross', 0)):.2f}")
                         col_h2.metric("Gastos", f"${float(record.get('total_expenses', 0)):.2f}")
@@ -551,9 +595,20 @@ if view_option == "📅 Diario":
                         col_h4.write(f"**Millas:** {float(record.get('miles_driven', 0)):.1f} mi")
                         col_h5.write(f"**Combustible:** ${float(record.get('fuel_cost', 0)):.2f}")
                         
-                        if st.button(f"🗑️ Eliminar", key=f"delete_{record.get('date', '')}"):
-                            db.delete_record(record.get('date', ''))
-                            st.rerun()
+                        # Botones de acción
+                        col_btn1, col_btn2 = st.columns([1, 1])
+                        with col_btn1:
+                            if st.button(f"🗑️ Eliminar", key=f"delete_{record_date}"):
+                                db.delete_record(record_date)
+                                st.cache_data.clear()
+                                st.rerun()
+                        with col_btn2:
+                            if st.button(f"✏️ Modificar", key=f"edit_{record_date}", type="primary"):
+                                # Guardar la fecha en session_state para cargarla
+                                st.session_state.editing_date = record_date
+                                # Cambiar a vista Diario
+                                st.session_state.view_option = "📅 Diario"
+                                st.rerun()
             else:
                 st.info("No hay registros en el historial.")
         except Exception as e:
@@ -628,11 +683,22 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             
             if week_records:
                 for record in week_records:
-                    with st.expander(f"📅 {record.get('date', 'Sin fecha')} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
+                    record_date = record.get('date', '')
+                    with st.expander(f"📅 {record_date} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
                         col_h1, col_h2, col_h3 = st.columns(3)
                         col_h1.metric("Ingreso Bruto", f"${float(record.get('total_gross', 0)):.2f}")
                         col_h2.metric("Gastos", f"${float(record.get('total_expenses', 0)):.2f}")
                         col_h3.metric("Ganancia Neta", f"${float(record.get('net_profit', 0)):.2f}")
+                        
+                        # Botón de modificar en la esquina inferior derecha
+                        col_btn1, col_btn2 = st.columns([3, 1])
+                        with col_btn2:
+                            if st.button(f"✏️ Modificar", key=f"edit_weekly_{record_date}", type="primary", use_container_width=True):
+                                # Guardar la fecha en session_state para cargarla
+                                st.session_state.editing_date = record_date
+                                # Cambiar a vista Diario
+                                st.session_state.view_option = "📅 Diario"
+                                st.rerun()
             else:
                 st.info("No hay registros para esta semana aún.")
         except Exception as e:
@@ -655,7 +721,16 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
         
         # Obtener valores seleccionados (si existen en session_state, sino usar actuales)
         selected_year = st.session_state.get('year_selector', current_year)
-        selected_month = st.session_state.get('month_selector', current_month - 1) + 1
+        # En el sidebar, "month_selector" guarda directamente el número de mes (1-12),
+        # por lo que aquí NO debemos sumarle 1 de nuevo.
+        selected_month = st.session_state.get('month_selector', current_month)
+        # Asegurar que el mes esté siempre en el rango válido 1-12
+        if not isinstance(selected_month, int):
+            try:
+                selected_month = int(selected_month)
+            except Exception:
+                selected_month = current_month
+        selected_month = max(1, min(12, selected_month))
         
         months_list = [
             "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -710,7 +785,8 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
             
             if month_records:
                 for record in month_records:
-                    with st.expander(f"📅 {record.get('date', 'Sin fecha')} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
+                    record_date = record.get('date', '')
+                    with st.expander(f"📅 {record_date} - Ganancia Neta: ${float(record.get('net_profit', 0)):.2f}"):
                         col_h1, col_h2, col_h3 = st.columns(3)
                         col_h1.metric("Ingreso Bruto", f"${float(record.get('total_gross', 0)):.2f}")
                         col_h2.metric("Gastos", f"${float(record.get('total_expenses', 0)):.2f}")
@@ -719,6 +795,16 @@ elif view_option in ["📆 Semanal", "📅 Mensual"]:
                         col_h4, col_h5 = st.columns(2)
                         col_h4.write(f"**Millas:** {float(record.get('miles_driven', 0)):.1f} mi")
                         col_h5.write(f"**Combustible:** ${float(record.get('fuel_cost', 0)):.2f}")
+                        
+                        # Botón de modificar en la esquina inferior derecha
+                        col_btn1, col_btn2 = st.columns([3, 1])
+                        with col_btn2:
+                            if st.button(f"✏️ Modificar", key=f"edit_monthly_{record_date}", type="primary", use_container_width=True):
+                                # Guardar la fecha en session_state para cargarla
+                                st.session_state.editing_date = record_date
+                                # Cambiar a vista Diario
+                                st.session_state.view_option = "📅 Diario"
+                                st.rerun()
             else:
                 st.info("No hay registros para este mes aún.")
         except Exception as e:
