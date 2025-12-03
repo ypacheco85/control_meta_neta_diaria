@@ -43,39 +43,66 @@ if mpg != vehicle_config['mpg'] or gas_price != vehicle_config['gas_price'] or m
 st.sidebar.markdown("---")
 st.sidebar.header("📅 Seleccionar Fecha")
 
-# Si hay una fecha de edición en session_state, usarla
-if 'editing_date' in st.session_state and st.session_state.editing_date:
-    default_date = datetime.strptime(st.session_state.editing_date, '%Y-%m-%d').date()
-    # Limpiar editing_date después de usarla para que no persista
+# Verificar si estamos en modo de edición
+is_editing_mode = 'editing_date' in st.session_state and st.session_state.editing_date
+
+# Si hay una fecha de edición en session_state, usarla y mantenerla
+if is_editing_mode:
     editing_date_str = st.session_state.editing_date
-    del st.session_state.editing_date
+    default_date = datetime.strptime(editing_date_str, '%Y-%m-%d').date()
+    # Deshabilitar el selector de fecha cuando se está editando
+    selected_date = st.sidebar.date_input(
+        "Fecha del registro:",
+        value=default_date,
+        max_value=datetime.now().date(),
+        disabled=True,  # Deshabilitado durante la edición
+        help="⚠️ Modo edición: La fecha está bloqueada. Guarda los cambios o cancela la edición."
+    )
+    # Mostrar botón para cancelar edición
+    if st.sidebar.button("❌ Cancelar Edición", key="cancel_edit", use_container_width=True):
+        del st.session_state.editing_date
+        if 'last_loaded_date' in st.session_state:
+            del st.session_state.last_loaded_date
+        st.rerun()
 else:
     default_date = datetime.now().date()
     editing_date_str = None
-
-selected_date = st.sidebar.date_input(
-    "Fecha del registro:",
-    value=default_date,
-    max_value=datetime.now().date(),
-    help="Selecciona la fecha del registro que deseas ver o editar"
-)
+    selected_date = st.sidebar.date_input(
+        "Fecha del registro:",
+        value=default_date,
+        max_value=datetime.now().date(),
+        help="Selecciona la fecha del registro que deseas ver o editar"
+    )
 
 # Cargar registro de la fecha seleccionada
-selected_date_str = selected_date.isoformat()
+# Si estamos editando, usar siempre la fecha de edición
+if is_editing_mode:
+    selected_date_str = editing_date_str
+else:
+    selected_date_str = selected_date.isoformat()
+
 try:
     selected_record = db.get_record_by_date(selected_date_str)
 except:
     selected_record = None
 
-# Si se está editando, forzar recarga de datos
-if editing_date_str and editing_date_str == selected_date_str:
-    if 'last_loaded_date' in st.session_state:
+# Si se está editando, forzar recarga de datos y asegurar vista Diario
+if is_editing_mode:
+    # Forzar recarga de datos al entrar en modo edición
+    # Limpiar last_loaded_date si existe y es diferente a la fecha de edición
+    if 'last_loaded_date' in st.session_state and st.session_state.last_loaded_date != editing_date_str:
         del st.session_state.last_loaded_date
     # Asegurar que estamos en modo Diario para mostrar el formulario
     st.session_state.view_option = "📅 Diario"
 
 # Mostrar información del registro seleccionado
-if selected_record:
+if is_editing_mode:
+    # Modo edición activo
+    edit_date_obj = datetime.strptime(editing_date_str, '%Y-%m-%d').date()
+    st.sidebar.warning(f"✏️ **EDITANDO** registro del {edit_date_obj.strftime('%d/%m/%Y')}")
+    st.sidebar.caption("La fecha está bloqueada. Modifica los datos y guarda los cambios.")
+elif selected_record:
+    # Hay registro pero no se está editando
     if selected_date == datetime.now().date():
         st.sidebar.success(f"📅 Registro de hoy cargado")
     else:
@@ -85,6 +112,7 @@ if selected_record:
     with col_del1:
         if st.button("🔄 Limpiar registro", key="clear_record"):
             db.delete_record(selected_date_str)
+            st.cache_data.clear()
             st.rerun()
     with col_del2:
         if st.button("📋 Cargar en formulario", key="load_record"):
@@ -93,6 +121,7 @@ if selected_record:
                 del st.session_state.last_loaded_date
             st.rerun()
 else:
+    # No hay registro
     if selected_date == datetime.now().date():
         st.sidebar.info("📝 No hay registro para hoy. Completa el formulario y guarda.")
     else:
@@ -504,10 +533,17 @@ if view_option == "📅 Diario":
 
     # --- GUARDAR EN BASE DE DATOS ---
     st.markdown("---")
-    fecha_label_btn = "Hoy" if selected_date == datetime.now().date() else selected_date.strftime('%d/%m/%Y')
     
     # Determinar si estamos editando un registro existente
-    is_editing = selected_record is not None
+    is_editing = selected_record is not None or is_editing_mode
+    
+    # Si estamos en modo edición, usar siempre la fecha original del registro
+    if is_editing_mode:
+        date_to_save = editing_date_str
+        fecha_label_btn = datetime.strptime(editing_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')
+    else:
+        date_to_save = selected_date_str
+        fecha_label_btn = "Hoy" if selected_date == datetime.now().date() else selected_date.strftime('%d/%m/%Y')
     
     # Botón flotante en la esquina inferior derecha usando columnas
     col_save1, col_save2, col_save3 = st.columns([2, 1, 1])
@@ -542,9 +578,13 @@ if view_option == "📅 Diario":
                 'net_profit': net_profit,
                 'expense_ratio': expense_ratio
             }
-            if db.save_daily_record(record_data, selected_date_str):
+            # Usar siempre la fecha original cuando se está editando
+            if db.save_daily_record(record_data, date_to_save):
                 if is_editing:
                     st.success(f"✅ Cambios del {fecha_label_btn} guardados exitosamente en Google Sheets!")
+                    # Limpiar modo edición después de guardar exitosamente
+                    if 'editing_date' in st.session_state:
+                        del st.session_state.editing_date
                 else:
                     st.success(f"✅ Registro del {fecha_label_btn} guardado exitosamente en Google Sheets!")
                 # Limpiar caché y recargar
